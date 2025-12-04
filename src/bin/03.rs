@@ -9,17 +9,19 @@ fn process_line(line: &str, n_digits: u8) -> u64 {
     for remaining in (0..n_digits).rev() {
         // Find the largest digit in the range idx..len - remaining.
         let mut best: u8 = 0;
-        for (i, c) in line[idx..line.len() - remaining as usize]
+        let mut best_i = 0;
+        for (i, c) in line[idx..(line.len() - remaining as usize)]
             .chars()
             .enumerate()
         {
             let n = c.to_digit(10).unwrap() as u8;
             if n > best {
                 best = n;
-                idx = i;
+                best_i = i;
             }
         }
-        num += 10_u64.pow(remaining as u32);
+        idx += best_i + 1;
+        num += (best as u64) * 10_u64.pow(remaining as u32);
     }
 
     num
