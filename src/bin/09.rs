@@ -1,8 +1,10 @@
+use std::collections::{HashMap, HashSet};
+
 advent_of_code::solution!(9);
 
 type Point = (u64, u64);
-type Segment = (Point, Point);
 
+#[inline]
 fn parse_input(input: &str) -> Vec<Point> {
     let mut output: Vec<_> = Vec::new();
     for line in input.trim().lines() {
@@ -13,11 +15,145 @@ fn parse_input(input: &str) -> Vec<Point> {
     output
 }
 
-fn compute_area(p1: &Point, p2: &Point) -> u64 {
-    let (a, b) = *p1;
-    let (c, d) = *p2;
+#[derive(Clone, Debug)]
+struct Mapping {
+    _mapping_x: HashMap<u64, u64>,
+    _mapping_y: HashMap<u64, u64>,
+    max: Point,
+}
 
-    (a.abs_diff(c) + 1) * (b.abs_diff(d) + 1)
+impl Mapping {
+    /// Get a list of (x, y) coordinates and creates a mapping to the coordinates in the compressed
+    /// grid.
+    pub fn from(points: &[Point]) -> Self {
+        let mut xs: Vec<_> = points.iter().map(|(x, _)| *x).collect();
+        let mut ys: Vec<_> = points.iter().map(|(_, y)| *y).collect();
+
+        // Append a row and column before and after the data, so that there's a perimeter around
+        // it.
+        // NOTE: This is done so that later on, when running a flood fill algorythm, compressed
+        // point (0,0) is ensured to be outside the boundary, and there's a continuous path aound
+        // the boundary so that all outside points are correctly tagged.
+        xs.push(xs.iter().min().unwrap() - 1);
+        xs.push(xs.iter().max().unwrap() + 1);
+        ys.push(ys.iter().min().unwrap() - 1);
+        ys.push(ys.iter().max().unwrap() + 1);
+
+        // Sort and remove duplicates.
+        xs.sort();
+        ys.sort();
+        xs.dedup();
+        ys.dedup();
+
+        // Create mappings / lookuup tables.
+        let map_x: HashMap<u64, u64> = xs
+            .into_iter()
+            .enumerate()
+            .map(|(i, x)| (x, 2 * i as u64))
+            .collect();
+        let map_y: HashMap<u64, u64> = ys
+            .into_iter()
+            .enumerate()
+            .map(|(j, y)| (y, 2 * j as u64))
+            .collect();
+
+        let max_x = map_x.iter().map(|(_, &v)| v).max().unwrap();
+        let max_y = map_y.iter().map(|(_, &v)| v).max().unwrap();
+
+        Self {
+            _mapping_x: map_x,
+            _mapping_y: map_y,
+            max: (max_x, max_y),
+        }
+    }
+
+    // fn inverse(&self) -> Self {
+    //     let map_x: HashMap<u64, u64> = self._mapping_x.iter().map(|(&k, &v)| (v, k)).collect();
+    //     let map_y: HashMap<u64, u64> = self._mapping_y.iter().map(|(&k, &v)| (v, k)).collect();
+
+    //     Self {
+    //         _mapping_x: map_x,
+    //         _mapping_y: map_y,
+    //     }
+    // }
+
+    fn get(&self, key: &Point) -> Point {
+        let (x, y) = key;
+        let out_x = self
+            ._mapping_x
+            .get(x)
+            .unwrap_or_else(|| panic!("Could not find {x} in x values."));
+        let out_y = self
+            ._mapping_y
+            .get(y)
+            .unwrap_or_else(|| panic!("Could not find {y} in y values."));
+
+        (*out_x, *out_y)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Rectangle {
+    start: Point, // Top left corner
+    height: u64,
+    width: u64,
+}
+
+impl Rectangle {
+    fn from_points(p1: Point, p2: Point) -> Self {
+        let (x1, y1) = p1;
+        let (x2, y2) = p2;
+
+        let height = x1.abs_diff(x2) + 1;
+        let width = y1.abs_diff(y2) + 1;
+
+        let x = x1.min(x2);
+        let y = y1.min(y2);
+
+        Rectangle {
+            start: (x, y),
+            height,
+            width,
+        }
+    }
+
+    fn area(&self) -> u64 {
+        self.height * self.width
+    }
+}
+
+struct RectangleIntoIter {
+    rectangle: Rectangle,
+    index: usize,
+}
+
+impl IntoIterator for Rectangle {
+    type Item = Point;
+    type IntoIter = RectangleIntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Self::IntoIter {
+            rectangle: self,
+            index: 0,
+        }
+    }
+}
+
+impl Iterator for RectangleIntoIter {
+    type Item = Point;
+
+    /// Iterate through a rectangle, row-wise.
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= (self.rectangle.width * self.rectangle.height) as usize {
+            return None;
+        }
+        let i = self.index as u64 / self.rectangle.width;
+        let j = self.index as u64 % self.rectangle.width;
+
+        self.index += 1;
+
+        Some((self.rectangle.start.0 + i, self.rectangle.start.1 + j))
+    }
 }
 
 pub fn part_one(input: &str) -> Option<u64> {
@@ -25,133 +161,97 @@ pub fn part_one(input: &str) -> Option<u64> {
     let mut largest: u64 = 0;
     for (i, p1) in points.iter().enumerate() {
         for p2 in points[i + 1..].iter() {
-            largest = largest.max(compute_area(p1, p2));
+            largest = largest.max(Rectangle::from_points(*p1, *p2).area());
         }
     }
     Some(largest)
 }
 
-fn intersect(s1: &Segment, s2: &Segment) -> bool {
-    // Defining points A, B as the end points of segment s1, and C, D as the end points of segment
-    // s2, and calling u the vector from A to B, and v the vector from C to D, we can construct the
-    // following system of equations:
-    //
-    //  A + alpha * u = C + beta * v
-    //
-    // Where u = B - A, and v = D - C. Therefore:
-    //
-    //  Ax + alpha * (Bx - Ax) = Cx + beta * (Dx - Cx)
-    //  Ay + alpha * (By - Ay) = Cy + beta * (Dy - Cy)
-    //
-    // Re-arranging and writing in matrix form:
-    //
-    //  | (Bx - Ax)   - (Dx - Cx) || alpha |   | Cx - Ax |
-    //  |                         ||       | = |         |
-    //  | (By - Ay)   - (Dy - Cy) || beta  |   | Cy - Ay |
-    //
-    // The system can be solved by computing the inverse matrix.
-    // NOTE: This is what we call "matar moscas a cañonazos" in spanish.
-
-    let (a, b) = *s1;
-    let (c, d) = *s2;
-
-    let (ax, ay) = (a.0 as f64, a.1 as f64);
-    let (bx, by) = (b.0 as f64, b.1 as f64);
-    let (cx, cy) = (c.0 as f64, c.1 as f64);
-    let (dx, dy) = (d.0 as f64, d.1 as f64);
-
-    let det = (by - ay) * (dx - cx) + (bx - ax) * (dy - cy);
-
-    // If the determinant is 0, it means that the segments are parallel, so no intersection.
-    if det == 0f64 {
-        return false;
-    }
-
-    // Calling the components of the inverse matrix (p, q, r, s):
-    //
-    //  | p  q |
-    //  | r  s |
-    //
-    let p = -(dy - cy) / det;
-    let q = -(by - ay) / det;
-    let r = -(dx - cx) / det;
-    let s = -(bx - ax) / det;
-
-    // So finally the solution of the system is:
-    let alpha = p * (cx - ax) + q * (cy - ay);
-    let beta = r * (cx - ax) + s * (cy - ay);
-
-    // There is an intersection point contained within both segments if both alpha and beta are > 0
-    // and < 1.
-    if alpha > 0f64 && beta > 0f64 && alpha < 1f64 && beta < 1f64 {
-        return true;
-    }
-    false
-}
-
-fn rectangle_segs(p1: &Point, p2: &Point) -> impl Iterator<Item = Segment> {
-    let (x1, y1) = *p1;
-    let (x2, y2) = *p2;
-
-    // Define the points of the rectangle in a clockwise way:
-    // A ---- B
-    // |      |
-    // D -----C
-    let a: Point = *p1;
-    let b: Point = (x2, y1);
-    let c: Point = *p2;
-    let d: Point = (x1, y2);
-
-    // Create an iterator over the four segments:
-    // A -> B
-    // B -> C
-    // C -> D
-    // D -> A
-    [(a, b), (b, c), (c, d), (d, a)].into_iter()
-}
-
 pub fn part_two(input: &str) -> Option<u64> {
-    // Now the provided coordinates form a loop. The goal is to make the largest possible rectangle
-    // (by area) using a pair of coordinates as opposite coordinates that is fully contained within
-    // the loop.
-    // One possible approach is to create a compressed coordinate system, encoding "empty" rows or
-    // columns as their height or width.
-    // Another appsoach is to compute intersections of the sides of each possible rectangle with
-    // the segments in the loop. If there's an intersection, then the rectangle is not valid.
+    // Create a compressed coordinate system, enconding empty rows and columns as their width.
     let mut points = parse_input(input);
 
-    // Append the first element to the back of the vector so that all the closing segment is also
-    // created.
+    // Append the first point to the back of the array to create the closing segment.
     points.push(points[0]);
 
-    // Create a segments vector.
-    let segments: Vec<_> = points[0..points.len() - 1]
-        .iter()
-        .cloned()
-        .zip(points[1..].iter().cloned())
-        .collect();
+    // Generate a mapping from the original coordinates to the compressed grid.
+    let grid_mapping = Mapping::from(&points);
 
-    // Iterate though the points vector and create the rectangles. Intersect each side of the
-    // rectangle against all segments and continue to next rectangle if there's an intersection.
-    // NOTE: `segments` is the same length as `points`, so this implementation ends up being O(n³),
-    // which is not great.
-    let mut largest: u64 = 0;
-    for (i, p1) in points.iter().enumerate() {
-        'a: for p2 in points[i + 1..].iter() {
-            // NOTE: There is a corner case where the full rectangle lies outside the loop.
-            // This is precisely wht happens in the example data.
+    // Create the boundary in the compressed grid coordinates.
+    let mut boundary: HashSet<(u64, u64)> = HashSet::new();
+    for (p1, p2) in points[..points.len() - 1].iter().zip(points[1..].iter()) {
+        // Get compressed coordinates for p1 and p2:
+        let c1 = grid_mapping.get(p1);
+        let c2 = grid_mapping.get(p2);
 
-            // Compute intersections.
-            for s in rectangle_segs(p1, p2) {
-                for s2 in &segments {
-                    if intersect(&s, s2) {
-                        continue 'a;
-                    }
-                }
-            }
-            largest = largest.max(compute_area(p1, p2));
+        // Append the compressed coordinates of p1 and p2, and all points in between to the
+        // boundary set.
+        for p in Rectangle::from_points(c1, c2) {
+            boundary.insert(p);
         }
     }
+
+    // Fill in all outside points.
+    let mut outside: HashSet<Point> = HashSet::new();
+    let mut queue: Vec<Point> = Vec::new();
+
+    // Starting point:
+    queue.push((0, 0));
+
+    let (x_max, y_max) = grid_mapping.max;
+    while let Some(p) = queue.pop() {
+        // If point is not boundary, add it to the `outside` set, and add its neighbours to the
+        // queue.
+        // NOTE: Skip if point is already in the set.
+        if outside.contains(&p) {
+            continue;
+        }
+
+        // If point is in the boundary, skip.
+        if boundary.contains(&p) {
+            continue;
+        }
+
+        outside.insert(p);
+
+        for dir in [(1, 0), (-1, 0), (0, 1), (0, -1)].iter() {
+            let (dx, dy) = dir;
+            let (x, y) = p;
+
+            // Skip neighbour if outside the bounds.
+            if x as i64 + *dx < 0
+                || y as i64 + *dy < 0
+                || x as i64 + *dx > x_max as i64
+                || y as i64 + *dy > y_max as i64
+            {
+                continue;
+            }
+
+            let neighbour = (x.strict_add_signed(*dx), y.strict_add_signed(*dy));
+            queue.push(neighbour);
+        }
+    }
+
+    // Finally, compute rectangles like in part 1, but check if any of their points are outside.
+    let mut largest: u64 = 0;
+    for (i, p1) in points.iter().enumerate() {
+        for p2 in points[i + 1..].iter() {
+            let mut is_valid = true;
+            let c1 = grid_mapping.get(p1);
+            let c2 = grid_mapping.get(p2);
+            let rect = Rectangle::from_points(c1, c2);
+            for p in rect {
+                if outside.contains(&p) {
+                    is_valid = false;
+                    break;
+                }
+            }
+            if is_valid {
+                largest = largest.max(Rectangle::from_points(*p1, *p2).area());
+            }
+        }
+    }
+
     Some(largest)
 }
 
