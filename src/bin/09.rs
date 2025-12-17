@@ -228,6 +228,9 @@ pub fn part_two(input: &str) -> Option<u64> {
             }
 
             let neighbour = (x.strict_add_signed(*dx), y.strict_add_signed(*dy));
+            if outside.contains(&neighbour) {
+                continue;
+            }
             queue.push(neighbour);
         }
     }
@@ -235,20 +238,38 @@ pub fn part_two(input: &str) -> Option<u64> {
     // Finally, compute rectangles like in part 1, but check if any of their points are outside.
     let mut largest: u64 = 0;
     for (i, p1) in points.iter().enumerate() {
-        for p2 in points[i + 1..].iter() {
-            let mut is_valid = true;
+        'second: for p2 in points[i + 1..].iter() {
             let c1 = grid_mapping.get(p1);
             let c2 = grid_mapping.get(p2);
             let rect = Rectangle::from_points(c1, c2);
-            for p in rect {
+
+            // Since the boundary is one single closed line, we only need to look at the perimeter
+            // of the rectangle.
+            let a = rect.start;
+            let b = (rect.start.0 + rect.height, rect.start.1);
+            let c = (rect.start.0 + rect.height, rect.start.1 + rect.width);
+            let d = (rect.start.0, rect.start.1 + rect.width);
+            for p in Rectangle::from_points(a, b) {
                 if outside.contains(&p) {
-                    is_valid = false;
-                    break;
+                    continue 'second;
                 }
             }
-            if is_valid {
-                largest = largest.max(Rectangle::from_points(*p1, *p2).area());
+            for p in Rectangle::from_points(b, c) {
+                if outside.contains(&p) {
+                    continue 'second;
+                }
             }
+            for p in Rectangle::from_points(c, d) {
+                if outside.contains(&p) {
+                    continue 'second;
+                }
+            }
+            for p in Rectangle::from_points(d, a) {
+                if outside.contains(&p) {
+                    continue 'second;
+                }
+            }
+            largest = largest.max(Rectangle::from_points(*p1, *p2).area());
         }
     }
 
